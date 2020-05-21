@@ -1,4 +1,3 @@
-import com.sun.xml.internal.bind.v2.schemagen.xmlschema.SchemaTop;
 
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -19,7 +18,7 @@ public class ThreadPoolExecutor {
     private AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
 
     private static final int COUNT_BITS = Integer.SIZE - 3;
-    private static final int CAPACITY = COUNT_BITS - 1;
+    private static final int CAPACITY = (1 << COUNT_BITS) - 1;
     private static final int RUNNING = -1 << COUNT_BITS;
     private static final int SHUTDOWN = 0;
     private static final int STOP = 1 << COUNT_BITS;
@@ -94,18 +93,19 @@ public class ThreadPoolExecutor {
                 success = addWorker(task, true);
             }
             if (!success) {
-                throw new ThreadPoolSizeSmallException();
+                throw new ThreadPoolRejectException();
             }
         }
     }
 
     private boolean addWorker(Runnable task, boolean core) {
-        do {
+        for (; ; ) {
             //如果目前的线程不是运行态,或者不是shutdown且队列不为空的情况添加worker失败
             if (!isRunning(ctl.get()) && !((runStateOf(ctl.get()) == SHUTDOWN) && !workerQueue.isEmpty() && task != null)) {
                 return false;
             }
-            int w = workerCountOf(ctl.get());
+            int c = ctl.get();
+            int w = workerCountOf(c);
             if (core) {
                 if (w >= coreThreadSize) {
                     return false;
@@ -115,7 +115,10 @@ public class ThreadPoolExecutor {
                     return false;
                 }
             }
-        } while (!compareAndIncrementWorkerCount(ctl.get()));
+            if (compareAndIncrementWorkerCount(c)) {
+                break;
+            }
+        }
 
         Worker worker = new Worker(task);
         workers.add(worker);
@@ -203,28 +206,67 @@ public class ThreadPoolExecutor {
 
     //test
     public static void main(String[] args) {
-        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(3, 3);
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(2, 2);
 
         threadPoolExecutor.execute(() -> {
             for (int i = 0; i < 10; i++) {
                 System.out.println(i);
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         });
-
 
 
         threadPoolExecutor.execute(() -> {
             for (int i = 10; i < 20; i++) {
                 System.out.println(i);
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         });
-        threadPoolExecutor.shutdown();
+
 
         threadPoolExecutor.execute(() -> {
             for (int i = 20; i < 30; i++) {
                 System.out.println(i);
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         });
+
+        threadPoolExecutor.execute(() -> {
+            for (int i = 30; i < 40; i++) {
+                System.out.println(i);
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
+        threadPoolExecutor.shutdown();
+
+        threadPoolExecutor.execute(() -> {
+            for (int i = 40; i < 50; i++) {
+                System.out.println(i);
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
 
     }
 }
