@@ -5,6 +5,7 @@ import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -126,7 +127,7 @@ public class ThreadPoolExecutor {
 
         Worker worker = new Worker(task);
         workers.add(worker);
-        worker.start();
+        worker.thread.start();
         return true;
     }
 
@@ -171,22 +172,64 @@ public class ThreadPoolExecutor {
     }
 
 
-    private class Worker extends Thread {
+    private class Worker extends AbstractQueuedSynchronizer implements Runnable {
         private Runnable task;
+        private Thread thread;
 
         public Worker(Runnable task) {
             this.task = task;
+            this.thread = new Thread(this);
+        }
+
+        public void lock() {
+            acquire(1);
+        }
+
+        public boolean tryLock() {
+            return tryAcquire(1);
+        }
+
+        public void unlock() {
+            release(1);
+        }
+
+        protected boolean isHeldExclusively() {
+            return getState() != 0;
+        }
+
+        protected boolean tryAcquire(int unused) {
+            if (compareAndSetState(0, 1)) {
+                setExclusiveOwnerThread(Thread.currentThread());
+                return true;
+            }
+            return false;
+        }
+
+        protected boolean tryRelease(int unused) {
+            setExclusiveOwnerThread(null);
+            setState(0);
+            return true;
         }
 
         @Override
         public void run() {
+            Thread wt = Thread.currentThread();
             while (task != null || (task = getTask()) != null) {
+                //上锁是为了shutdown命令不会中断正在运行的线程
+                this.lock();
+                if ((runStateAtLeast(ctl.get(), STOP) ||
+                        (Thread.interrupted() &&
+                                runStateAtLeast(ctl.get(), STOP))) &&
+                        !wt.isInterrupted())
+                    wt.interrupt();
                 try {
                     task.run();
                 } catch (Exception e) {
                     System.out.println(e.getMessage());
+                } finally {
+                    task = null;
+                    this.unlock();
                 }
-                task = null;
             }
 
             //任务队列为空
@@ -204,8 +247,16 @@ public class ThreadPoolExecutor {
         try {
             mainLock.lock();
             advanceRunState(SHUTDOWN);
+            //阻塞没有runWorker的线程
             for (Worker w : workers) {
-                w.interrupt();
+                Thread t = w.thread;
+                if (!t.isInterrupted() && w.tryLock())
+                    try {
+                        t.interrupt();
+                    } catch (SecurityException ignore) {
+                    } finally {
+                        w.unlock();
+                    }
             }
         } finally {
             mainLock.unlock();
@@ -273,7 +324,7 @@ public class ThreadPoolExecutor {
             }
         });
 
-//        threadPoolExecutor.shutdown();
+        threadPoolExecutor.shutdown();
 
         threadPoolExecutor.execute(() -> {
             for (int i = 40; i < 50; i++) {
@@ -286,8 +337,8 @@ public class ThreadPoolExecutor {
             }
         });
 
-        while (true){
-            System.out.println("目前工作线程的数量："+workerCountOf(threadPoolExecutor.ctl.get()));
+        while (true) {
+            System.out.println("目前工作线程的数量：" + workerCountOf(threadPoolExecutor.ctl.get()));
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
