@@ -3,12 +3,14 @@ import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @author lilei
  **/
+@SuppressWarnings("unused")
 public class ThreadPoolExecutor {
     private volatile int maxThreadSize;
     private volatile int coreThreadSize;
@@ -16,6 +18,8 @@ public class ThreadPoolExecutor {
     private BlockingQueue<Runnable> workerQueue = new LinkedBlockingQueue<>();
     private final ReentrantLock mainLock = new ReentrantLock();
     private AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
+
+    private volatile boolean allowCoreThreadTimeOut = true;
 
     private static final int COUNT_BITS = Integer.SIZE - 3;
     private static final int CAPACITY = (1 << COUNT_BITS) - 1;
@@ -127,6 +131,7 @@ public class ThreadPoolExecutor {
     }
 
     Runnable getTask() {
+        boolean isTimeOut = false;
         for (; ; ) {
             System.out.println("从等待队列查找任务。。。");
             //如果目前的线程池处于结束状态
@@ -137,8 +142,9 @@ public class ThreadPoolExecutor {
                 return null;
             }
 
-            //再次判断工作线程的数量，如果超过最大限制，则将线程的工作数量减一,
-            if (workerCountOf(c) > maxThreadSize) {
+            int w = workerCountOf(c);
+            boolean timed = allowCoreThreadTimeOut || w > coreThreadSize;
+            if ((w > maxThreadSize || (timed && isTimeOut)) && (w > 1 || workerQueue.isEmpty())) {
                 if (compareAndDecrementWorkerCount(c)) {
                     return null;
                 }
@@ -146,12 +152,22 @@ public class ThreadPoolExecutor {
             }
 
             try {
-                return workerQueue.take();
+                Runnable r = timed ?
+                        workerQueue.poll(1000, TimeUnit.MILLISECONDS) : //1s
+                        workerQueue.take();
+                if (r != null) {
+                    return r;
+                }
+                isTimeOut = true;
             } catch (InterruptedException e) {
                 System.out.println("线程接受到终止命令");
+                isTimeOut = false;
             }
         }
+    }
 
+    public void setAllowCoreThreadTimeOut(boolean allowCoreThreadTimeOut) {
+        this.allowCoreThreadTimeOut = allowCoreThreadTimeOut;
     }
 
 
@@ -175,7 +191,9 @@ public class ThreadPoolExecutor {
 
             //任务队列为空
             workers.remove(this);
-            if (workerCountOf(ctl.get()) < coreThreadSize) {
+
+            int w = workerCountOf(ctl.get());
+            if ((!allowCoreThreadTimeOut && w < coreThreadSize) || w == 0) {
                 addWorker(null, true);
             }
         }
@@ -194,6 +212,7 @@ public class ThreadPoolExecutor {
         }
     }
 
+    @SuppressWarnings("SameParameterValue")
     private void advanceRunState(int targetState) {
         for (; ; ) {
             int c = ctl.get();
@@ -206,7 +225,7 @@ public class ThreadPoolExecutor {
 
     //test
     public static void main(String[] args) {
-        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(2, 2);
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(3, 3);
 
         threadPoolExecutor.execute(() -> {
             for (int i = 0; i < 10; i++) {
@@ -254,7 +273,7 @@ public class ThreadPoolExecutor {
             }
         });
 
-        threadPoolExecutor.shutdown();
+//        threadPoolExecutor.shutdown();
 
         threadPoolExecutor.execute(() -> {
             for (int i = 40; i < 50; i++) {
@@ -267,6 +286,14 @@ public class ThreadPoolExecutor {
             }
         });
 
+        while (true){
+            System.out.println("目前工作线程的数量："+workerCountOf(threadPoolExecutor.ctl.get()));
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                break;
+            }
+        }
 
     }
 }
