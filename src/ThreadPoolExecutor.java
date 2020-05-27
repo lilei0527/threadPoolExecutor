@@ -6,7 +6,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * @author lilei
@@ -17,7 +16,7 @@ public class ThreadPoolExecutor {
     private volatile int coreThreadSize;
     private Set<Worker> workers = new CopyOnWriteArraySet<>();
     private BlockingQueue<Runnable> workerQueue = new LinkedBlockingQueue<>();
-    private final ReentrantLock mainLock = new ReentrantLock();
+//    private final ReentrantLock mainLock = new ReentrantLock();
     private AtomicInteger ctl = new AtomicInteger(ctlOf(RUNNING, 0));
 
     private volatile boolean allowCoreThreadTimeOut = false;
@@ -134,8 +133,6 @@ public class ThreadPoolExecutor {
             worker = new Worker(task);
             Thread t = worker.thread;
             if (t != null) {
-                mainLock.lock();
-                try {
                     int rs = runStateOf(ctl.get());
                     if (rs < SHUTDOWN ||
                             (rs == SHUTDOWN && task == null)) {
@@ -144,9 +141,6 @@ public class ThreadPoolExecutor {
                         workers.add(worker);
                         workerAdded = true;
                     }
-                } finally {
-                    mainLock.unlock();
-                }
 
                 if (workerAdded) {
                     t.start();
@@ -162,15 +156,10 @@ public class ThreadPoolExecutor {
 
 
     private void addWorkerFailed(Worker w) {
-        final ReentrantLock mainLock = this.mainLock;
-        mainLock.lock();
-        try {
             if (w != null)
                 workers.remove(w);
             decrementWorkerCount();
-        } finally {
-            mainLock.unlock();
-        }
+
     }
 
     Runnable getTask() {
@@ -230,9 +219,6 @@ public class ThreadPoolExecutor {
     }
 
     private void interruptIdleWorkers(boolean onlyOne) {
-        final ReentrantLock mainLock = this.mainLock;
-        mainLock.lock();
-        try {
             for (Worker w : workers) {
                 Thread t = w.thread;
                 if (!t.isInterrupted() && w.tryLock()) {
@@ -246,9 +232,7 @@ public class ThreadPoolExecutor {
                 if (onlyOne)
                     break;
             }
-        } finally {
-            mainLock.unlock();
-        }
+
     }
 
     private class Worker extends AbstractQueuedSynchronizer implements Runnable {
@@ -335,8 +319,6 @@ public class ThreadPoolExecutor {
 
 
     private void shutdown() {
-        try {
-            mainLock.lock();
             advanceRunState(SHUTDOWN);
             //阻塞没有runWorker的线程
             for (Worker w : workers) {
@@ -349,9 +331,6 @@ public class ThreadPoolExecutor {
                         w.unlock();
                     }
             }
-        } finally {
-            mainLock.unlock();
-        }
         tryTerminate();
     }
 
@@ -367,7 +346,7 @@ public class ThreadPoolExecutor {
 
     //test
     public static void main(String[] args) {
-        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(3, 3);
+        ThreadPoolExecutor threadPoolExecutor = new ThreadPoolExecutor(2, 2);
 
 //        java.util.concurrent.ThreadPoolExecutor threadPoolExecutor = new java.util.concurrent.ThreadPoolExecutor
 //                (3,3,1000,TimeUnit.MILLISECONDS,new LinkedBlockingQueue<>());
